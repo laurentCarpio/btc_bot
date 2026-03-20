@@ -1,10 +1,12 @@
 # Ignore sensitive or unnecessary files/folders in the image
-__pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.ipynb
 .DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
 
 # Ignore local environments
 .venv/
@@ -18,8 +20,7 @@ __pycache__/
 *.parquet
 
 # Local test files or scratch code
-btc_bot/misc/
-btc_bot/*.ipynb
+*.ipynb
 
 # Ignore data and logs
 
