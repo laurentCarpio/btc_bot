@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "btc-bot"
+version = "0.1.0"
+description = "btc bot live"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools]
+# layout plat (pas de "src/")
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+# 👉 on ne prend que next_bot et ses sous-modules
+include = ["btc_bot*"]
+# 👉 on exclut tout ce qui traîne à la racine
+exclude = ["reports*", "data*", "notebooks*", "scripts*", "tests*", "docs*"]

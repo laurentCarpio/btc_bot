@@ -1,0 +1,30 @@
+# Cloud / logging
+boto3==1.37.3
+botocore==1.37.3
+aioboto3==14.3.0
+aiobotocore==2.22.0
+watchtower==3.4.0
+colorlog==6.9.0
+
+# === Web & WebSockets ===
+aiohttp==3.9.5
+websocket-client==1.8.0
+websockets==15.0.1
+
+# Data stack (ML compatible)
+numpy==1.26.4
+pandas==2.1.4
+pyarrow==15.0.2
+s3fs==2024.2.0
+
+# ML
+scikit-learn==1.3.2
+lightgbm==4.3.0
+xgboost==3.2.0
+
+# Utils
+python-dateutil==2.9.0.post0
+pytz==2025.1
+tzdata==2024.1
+packaging==24.2
+PyYAML==6.0.3
