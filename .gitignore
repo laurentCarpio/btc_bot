@@ -1,0 +1,43 @@
+# Fichiers système
+.DS_Store
+Thumbs.db
+**/.DS_Store
+
+
+# Environnements virtuels / dépendances
+__pycache__/
+**/__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+
+# VS Code settings
+.vscode/
+
+# Environment variables
+env/
+
+# Ignore Dockerfile to avoid pushing secrets
+Dockerfile
+
+# Jupyter Notebook checkpoints and notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs and reports
+*.log
+*.csv
+
+# Docker
+*.tar
+docker-compose.override.yml
+
+# Local test files or scratch code
+
+# Ignore compiled C extensions (if ever used)
+*.so
+
+# Ignore test outputs and data
