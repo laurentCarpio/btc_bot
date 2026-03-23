@@ -105,6 +105,11 @@ class LiveOrchestrator:
         close: float,
         volume: float,
     ):
+        self.logger.debug(
+            f"[LiveOrchestrator] candle_1m_update symbol={symbol} "
+            f"ts_ms={ts_ms} open_={open_} high={high} low={low} close={close} volume={volume}"
+        )
+        
         ts = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
 
         new_candle = Candle1m(

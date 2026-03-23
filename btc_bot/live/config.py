@@ -42,6 +42,7 @@ class ThresholdConfig:
     mad_spread: float = 1.0
     med_nps: float = 0.0
     mad_nps: float = 1.0
+    ms_cut_value: float = float("-inf")
 
 
 @dataclass(slots=True)

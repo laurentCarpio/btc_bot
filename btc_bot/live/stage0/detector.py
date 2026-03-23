@@ -17,24 +17,27 @@ class Stage0Detector:
         cfg: Stage0Config,
         thr: ThresholdConfig,
         symbol: str,
+        venue: str,
+        ms_cut_monitor=None,
     ) -> None:
         self.cfg = cfg
         self.thr = thr
         self.symbol = symbol
         self.logger = logger_pub
+        self.venue = venue
 
         # Near-miss tuning
         self.near_miss_max_failed = 2
         self.near_miss_ms_abs_max = 2.0
 
-        # Must come from offline backtest export
-        # Example: stage0_thresholds_prod.json should contain "ms_cut_value"
+        # Shadow only: monitoring, not gating
         self.ms_cut_value = float(getattr(thr, "ms_cut_value", np.nan))
+        self.ms_cut_monitor = ms_cut_monitor
 
         if not np.isfinite(self.ms_cut_value):
             self.logger.warning(
                 f"[Stage0Detector] ms_cut_value missing or invalid for symbol={symbol}. "
-                "pass_ms_keep will be False until configured."
+                "MS cut shadow monitoring will be unavailable."
             )
 
     def compute_ms(self, snap: Stage0Snapshot) -> float:
@@ -88,45 +91,30 @@ class Stage0Detector:
 
         pass_all_hard = all(checks.values())
         ms = self.compute_ms(snap)
+
+        # Shadow monitor only
+        if self.ms_cut_monitor is not None:
+            self.ms_cut_monitor.update(ms=ms, pass_all_hard=pass_all_hard)
+
+        # IMPORTANT:
+        # Live decision aligned with historical backtest reference.
+        # No MS gating here.
+        pass_ms_keep = bool(pass_all_hard)
+
         failed = [k for k, v in checks.items() if not v]
 
-        pass_ms_keep = bool(
-            pass_all_hard
-            and np.isfinite(self.ms_cut_value)
-            and (ms >= self.ms_cut_value)
-        )
-
-        if pass_ms_keep:
+        if pass_all_hard:
             log_candidate_event(
                 logger_cand,
                 {
+                    "venue": self.venue,
                     "event": "accept",
                     "ts": snap.timestamp.isoformat(),
                     "symbol": self.symbol,
                     "dir0": dir0,
                     "ms": ms,
                     "ms_cut_value": self.ms_cut_value,
-                    "micro": snap.micro_bias_bps,
-                    "obi10": snap.OBI_10,
-                    "ti": snap.TI,
-                    "nps": snap.nps,
-                    "thin": snap.thinning_opp_3,
-                    "range60": snap.range_60s_bps,
-                    "persist_micro_ms": snap.persist_micro_ms,
-                    "persist_obi10_ms": snap.persist_obi10_ms,
-                },
-            )
-
-        elif pass_all_hard:
-            log_candidate_event(
-                logger_cand,
-                {
-                    "event": "hard_pass_only",
-                    "ts": snap.timestamp.isoformat(),
-                    "symbol": self.symbol,
-                    "dir0": dir0,
-                    "ms": ms,
-                    "ms_cut_value": self.ms_cut_value,
+                    "ms_above_cut": bool(np.isfinite(self.ms_cut_value) and ms >= self.ms_cut_value),
                     "micro": snap.micro_bias_bps,
                     "obi10": snap.OBI_10,
                     "ti": snap.TI,
@@ -139,7 +127,7 @@ class Stage0Detector:
             )
 
         elif self._is_near_miss(failed, ms):
-            self.logger.info(
+            self.logger.debug(
                 "[Stage0Detector] near_miss "
                 f"ts={snap.timestamp.isoformat()} "
                 f"failed={failed} "
@@ -188,6 +176,7 @@ class Stage0Detector:
             "persist_obi10_ms": snap.persist_obi10_ms,
             "range_60s_bps": snap.range_60s_bps,
             "ms_cut_value": self.ms_cut_value,
+            "ms_above_cut": bool(np.isfinite(self.ms_cut_value) and ms >= self.ms_cut_value),
         }
 
         return Stage0Candidate(

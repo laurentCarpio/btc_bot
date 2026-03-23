@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+import inspect
+import logging
+from btc_bot.live.binance.rest_market_data import fetch_recent_klines_1m
+
+class BinanceLiveSocketBridge:
+    def __init__(
+        self,
+        ws_pub_client,
+        live_orchestrator,
+        logger: logging.Logger,
+    ):
+        self.ws_pub_client = ws_pub_client
+        self.live_orchestrator = live_orchestrator
+        self.logger = logger
+
+        self.ws_pub_client.on_book = self._on_book
+        self.ws_pub_client.on_trade = self._on_trade
+        self.ws_pub_client.on_candle = self._on_candle
+
+    async def connect(self):
+        await self.warmup_recent_1m_klines(limit=300)
+        await self.ws_pub_client.connect()
+        self.logger.info("[BinanceLiveSocketBridge] ✅ Public WS connected and subscribed")
+
+    async def close(self):
+        await self.ws_pub_client.close()
+        self.logger.info("[BinanceLiveSocketBridge] closed")
+
+    async def warmup_recent_1m_klines(self, limit: int = 300):
+        klines = fetch_recent_klines_1m(
+            symbol=self.ws_pub_client.symbol.upper(),
+            limit=limit,
+        )
+
+        self.logger.info(
+            f"[BinanceLiveSocketBridge] warmup start symbol={self.ws_pub_client.symbol.upper()} n_klines={len(klines)}"
+        )
+
+        for k in klines:
+            await self.live_orchestrator.on_candle_1m_update(
+                symbol=self.ws_pub_client.symbol.upper(),
+                ts_ms=int(k["close_time"]),
+                open_=float(k["open"]),
+                high=float(k["high"]),
+                low=float(k["low"]),
+                close=float(k["close"]),
+                volume=float(k["volume"]),
+            )
+
+        self.logger.info(
+            f"[BinanceLiveSocketBridge] warmup done symbol={self.ws_pub_client.symbol.upper()}"
+        )
+
+    async def _on_book(self, book: dict):
+        try:
+            bids = book.get("bids", [])
+            asks = book.get("asks", [])
+            ts_ms = int(book["timestamp"])
+
+            if not bids or not asks:
+                return
+
+            if not hasattr(self, "_seen_first_book"):
+                self._seen_first_book = True
+                self.logger.info("[BinanceLiveSocketBridge] first book received")
+
+            norm_bids = [(float(px), float(sz)) for px, sz in bids[:16]]
+            norm_asks = [(float(px), float(sz)) for px, sz in asks[:16]]
+
+            await self.live_orchestrator.on_book_update(
+                symbol=self.ws_pub_client.symbol.upper(),
+                ts_ms=ts_ms,
+                bids=norm_bids,
+                asks=norm_asks,
+                action="update",
+            )
+
+        except Exception as e:
+            self.logger.exception(f"[BinanceLiveSocketBridge] book handler error: {e}")
+
+    async def _on_trade(self, trade: dict):
+        try:
+            ts_ms = int(trade["timestamp"])
+            price = float(trade["price"])
+            qty = float(trade["qty"])
+            side = str(trade["side"]).lower()
+
+            if not hasattr(self, "_seen_first_trade"):
+                self._seen_first_trade = True
+                self.logger.info("[BinanceLiveSocketBridge] first trade received")
+
+            await self.live_orchestrator.on_trade_update(
+                symbol=self.ws_pub_client.symbol.upper(),
+                ts_ms=ts_ms,
+                price=price,
+                size=qty,
+                side=side,
+            )
+
+        except Exception as e:
+            self.logger.exception(f"[BinanceLiveSocketBridge] trade handler error: {e}")
+
+    async def _on_candle(self, candle: dict):
+        try:
+            if not candle.get("is_closed", False):
+                return
+
+            if not hasattr(self, "_seen_first_candle"):
+                self._seen_first_candle = True
+                self.logger.info("[BinanceLiveSocketBridge] first closed 1m candle received")
+
+            self.logger.debug(
+                "[BinanceLiveSocketBridge] closed 1m candle "
+                f"ts_ms={int(candle['close_time'])} "
+                f"open={float(candle['open'])} "
+                f"high={float(candle['high'])} "
+                f"low={float(candle['low'])} "
+                f"close={float(candle['close'])} "
+                f"volume={float(candle['volume'])}"
+            )
+            await self.live_orchestrator.on_candle_1m_update(
+                symbol=self.ws_pub_client.symbol.upper(),
+                ts_ms=int(candle["close_time"]),
+                open_=float(candle["open"]),
+                high=float(candle["high"]),
+                low=float(candle["low"]),
+                close=float(candle["close"]),
+                volume=float(candle["volume"]),
+            )
+
+        except Exception as e:
+            self.logger.exception(f"[BinanceLiveSocketBridge] candle handler error: {e}")

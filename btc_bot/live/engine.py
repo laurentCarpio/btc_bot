@@ -12,8 +12,8 @@ from btc_bot.live.trade.sizing import SimpleSizer
 
 
 class LiveEngine:
-    def __init__(self, detector: Stage0Detector, ml_service: MLInferenceService) -> None:
-        self.cfg = get_default_config()
+    def __init__(self, cfg, detector: Stage0Detector, ml_service: MLInferenceService) -> None:    
+        self.cfg = cfg
         self.detector = detector
         self.ml_service = ml_service
         self.router = BranchRouter(mr_bucket=self.cfg.regime.mr_bucket)
@@ -66,6 +66,7 @@ class LiveEngine:
         )
 
         router_decision = self.router.decide(candidate.dir0, regime)
+        self.logger.info(f"[LiveEngine] router_decision: {router_decision}")
 
         feature_map = dict(candidate.features)
         feature_map["atr_bps"] = float(atr_bps)
@@ -80,11 +81,18 @@ class LiveEngine:
         else:
             ml_decision = self.ml_service.score(feature_map)
 
+        self.logger.info(f"[LiveEngine] ml_decision: {ml_decision}")
+
         size_mult = self.sizer.size_from_ml(ml_decision)
+
+        if router_decision.router_branch != "BO":
+            reason = "mr_accept" if size_mult > 0 else "mr_reject"
+        else:
+            reason = "ml_accept" if size_mult > 0 else "ml_reject"
 
         entry_decision = EntryDecision(
             should_enter=size_mult > 0,
-            reason="ml_accept" if size_mult > 0 else "ml_reject",
+            reason=reason,
             symbol=candidate.symbol,
             timestamp=candidate.timestamp,
             side=router_decision.trade_dir,
@@ -99,6 +107,8 @@ class LiveEngine:
 
         self.logger.info(f" [LiveEngine] entry_decision: {entry_decision}")
         trade = self.executor.open_trade(entry_decision, entry_price=snap.mid)
+        self.logger.info(f"[LiveEngine] trade_opened: {trade}")
+
         self.open_trades[trade.trade_id] = trade
         return trade
 
