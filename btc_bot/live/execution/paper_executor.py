@@ -19,8 +19,19 @@ class PaperExecutor:
             size_mult=float(decision.size_mult),
         )
 
-    def close_trade(self, trade: OpenTrade, exit_price: float, exit_time):
+    def close_trade(
+        self,
+        trade: OpenTrade,
+        exit_price: float,
+        exit_time,
+        pnl_bps: float | None = None,
+        exit_reason: str | None = None,
+    ):
         trade.status = "CLOSED"
         trade.metadata["exit_price"] = float(exit_price)
         trade.metadata["exit_time"] = exit_time
+        if pnl_bps is not None:
+            trade.metadata["pnl_bps"] = float(pnl_bps)
+        if exit_reason is not None:
+            trade.metadata["exit_reason"] = str(exit_reason)
         return trade

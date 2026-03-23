@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from btc_bot.live.config import get_default_config
 from btc_bot.live.execution.paper_executor import PaperExecutor
-from btc_bot.live.logging.trade_logger import logger_pub
+from btc_bot.live.logging.trade_logger import logger_pub, logger_cand, log_candidate_event
 from btc_bot.live.ml.inference import MLInferenceService
 from btc_bot.live.models import EntryDecision, Stage0Snapshot, MLDecision, RegimeSnapshot
 from btc_bot.live.router.router import BranchRouter
@@ -105,11 +105,39 @@ class LiveEngine:
             self.logger.info(f" [LiveEngine] entry_decision: {entry_decision}")
             return None
 
-        self.logger.info(f" [LiveEngine] entry_decision: {entry_decision}")
-        trade = self.executor.open_trade(entry_decision, entry_price=snap.mid)
-        self.logger.info(f"[LiveEngine] trade_opened: {trade}")
+        self.logger.info(f"[LiveEngine] entry_decision: {entry_decision}")
 
+        trade = self.executor.open_trade(entry_decision, entry_price=snap.mid)
         self.open_trades[trade.trade_id] = trade
+
+        self.logger.info(
+            f"[LiveEngine] trade_opened: "
+            f"trade_id={trade.trade_id} "
+            f"symbol={trade.symbol} "
+            f"side={trade.side} "
+            f"router_branch={trade.router_branch} "
+            f"score_ml={trade.score_ml} "
+            f"size_mult={trade.size_mult} "
+            f"entry_time={trade.entry_time.isoformat()} "
+            f"entry_price={trade.entry_price:.6f}"
+        )
+
+        log_candidate_event(
+            logger_cand,
+            {
+                "venue": getattr(self.detector, "venue", "unknown"),
+                "event": "trade_opened",
+                "trade_id": trade.trade_id,
+                "symbol": trade.symbol,
+                "side": int(trade.side),
+                "router_branch": trade.router_branch,
+                "score_ml": None if trade.score_ml is None else float(trade.score_ml),
+                "size_mult": float(trade.size_mult),
+                "entry_time": trade.entry_time.isoformat(),
+                "entry_price": float(trade.entry_price),
+            },
+        )
+
         return trade
 
     def on_timer(self, now_ts, current_mid: float):
@@ -121,13 +149,56 @@ class LiveEngine:
                 now_ts=now_ts,
                 current_price=current_mid,
             )
+
             if exit_decision.should_exit:
                 self.executor.close_trade(
                     trade=trade,
                     exit_price=current_mid,
                     exit_time=now_ts,
+                    pnl_bps=exit_decision.pnl_bps,
+                    exit_reason=exit_decision.reason,
                 )
-                self.logger.info(f"[LiveEngine] exit: {trade.trade_id} , {exit_decision}")
+
+                holding_s = (now_ts - trade.entry_time).total_seconds()
+
+                self.logger.info(
+                    f"[LiveEngine] trade_closed: "
+                    f"trade_id={trade.trade_id} "
+                    f"symbol={trade.symbol} "
+                    f"side={trade.side} "
+                    f"router_branch={trade.router_branch} "
+                    f"score_ml={trade.score_ml} "
+                    f"size_mult={trade.size_mult} "
+                    f"entry_time={trade.entry_time.isoformat()} "
+                    f"exit_time={now_ts.isoformat()} "
+                    f"entry_price={trade.entry_price:.6f} "
+                    f"exit_price={float(current_mid):.6f} "
+                    f"pnl_bps={float(exit_decision.pnl_bps):.6f} "
+                    f"holding_s={holding_s:.3f} "
+                    f"reason={exit_decision.reason}"
+                )
+
+                log_candidate_event(
+                    logger_cand,
+                    {
+                        "venue": getattr(self.detector, "venue", "unknown"),
+                        "event": "trade_closed",
+                        "trade_id": trade.trade_id,
+                        "symbol": trade.symbol,
+                        "side": int(trade.side),
+                        "router_branch": trade.router_branch,
+                        "score_ml": None if trade.score_ml is None else float(trade.score_ml),
+                        "size_mult": float(trade.size_mult),
+                        "entry_time": trade.entry_time.isoformat(),
+                        "exit_time": now_ts.isoformat(),
+                        "entry_price": float(trade.entry_price),
+                        "exit_price": float(current_mid),
+                        "pnl_bps": float(exit_decision.pnl_bps),
+                        "holding_s": float(holding_s),
+                        "reason": str(exit_decision.reason),
+                    },
+                )
+
                 closed.append(trade_id)
 
         for trade_id in closed:

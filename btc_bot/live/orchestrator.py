@@ -68,6 +68,7 @@ class LiveOrchestrator:
 
     async def on_trade_update(self, symbol: str, ts_ms: int, price: float, size: float, side: str):
         ts = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+
         closed = self.bucketizer.maybe_close_bucket(ts)
         if closed is not None:
             self.logger.debug(
@@ -75,11 +76,14 @@ class LiveOrchestrator:
                 f"bucket_end={closed.bucket_end.isoformat()} "
                 f"bid0={closed.bid_0_price} ask0={closed.ask_0_price} ntr={closed.ntr}"
             )
+
             snap = self.feature_builder.build_snapshot(closed)
+
             if snap is None:
                 self.logger.info(
                     f"[LiveOrchestrator] snapshot_none bucket_end={closed.bucket_end.isoformat()}"
                 )
+
             await self._emit_stage0_if_ready(snap)
 
         self.bucketizer.update_trade(
@@ -94,7 +98,20 @@ class LiveOrchestrator:
         if not self.trade_ready and trade_window_ready:
             self.trade_ready = True
             self.logger.info("[LiveOrchestrator] trade_ready=True")
-            
+
+        best_bid = self.bucketizer.book.best_bid()
+        best_ask = self.bucketizer.book.best_ask()
+
+        if best_bid > 0 and best_ask > 0 and best_bid < best_ask:
+            current_mid = (best_bid + best_ask) / 2.0
+        else:
+            current_mid = float(price)
+
+        self.engine.on_timer(
+            now_ts=ts,
+            current_mid=float(current_mid),
+        )
+        
     async def on_candle_1m_update(
         self,
         symbol: str,
