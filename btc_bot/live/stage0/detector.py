@@ -61,11 +61,54 @@ class Stage0Detector:
             + 0.2 * z_nps
         )
 
-    def _is_near_miss(self, failed: list[str], ms: float) -> bool:
-        return (
-            len(failed) <= self.near_miss_max_failed
-            or abs(ms) <= self.near_miss_ms_abs_max
-        )
+    def _compute_gaps(self, snap: Stage0Snapshot) -> dict[str, float]:
+        """
+        Gap > 0  => passe le seuil
+        Gap < 0  => sous le seuil
+        Les gaps sont exprimés en ratio relatif au seuil quand possible.
+        """
+        def rel_gap(value: float, threshold: float) -> float:
+            if threshold == 0:
+                return 0.0
+            return (float(value) - float(threshold)) / (abs(float(threshold)) + 1e-12)
+
+        return {
+            "spread_rel": rel_gap(self.thr.spread_rel_max, snap.spread_rel_5m),      # inverse: plus petit = mieux
+            "spread_ticks": rel_gap(self.thr.spread_ticks_max, snap.spread_ticks_1s),# inverse
+            "range60": rel_gap(snap.range_60s_bps, self.thr.range60s_min),
+            "obi10": rel_gap(abs(snap.OBI_10), self.thr.obi10_abs_min),
+            "micro": rel_gap(abs(snap.micro_bias_bps), self.thr.micro_abs_min),
+            "Ntot": 1.0 if snap.Ntot > 0.0 else -1.0,
+            "TI": rel_gap(abs(snap.TI), self.thr.ti_abs_min),
+            "nps": rel_gap(snap.nps, self.thr.nps_min),
+            "persist": 1.0 if (
+                snap.persist_micro_ms >= self.cfg.persist_ms_min
+                or snap.persist_obi10_ms >= self.cfg.persist_ms_min
+            ) else -1.0,
+            "thin": rel_gap(snap.thinning_opp_3, self.thr.thin_min),
+            "sign_micro": 1.0 if np.sign(snap.micro_bias_bps) == int(snap.dir0) else -1.0,
+            "sign_ti": 1.0 if np.sign(snap.TI) == int(snap.dir0) else -1.0,
+        }
+    def _is_near_miss(self, failed: list[str], ms: float, gaps: dict[str, float]) -> bool:
+        # Trop de filtres ratés = pas intéressant
+        if len(failed) == 0:
+            return False
+        if len(failed) > 2:
+            return False
+
+        # 1 seul fail → near_miss si le fail est borderline
+        if len(failed) == 1:
+            f = failed[0]
+            return gaps.get(f, -999.0) >= -0.10
+
+        # 2 fails → beaucoup plus strict
+        # On veut deux fails "proches" + un MS pas catastrophique
+        if len(failed) == 2:
+            g1 = gaps.get(failed[0], -999.0)
+            g2 = gaps.get(failed[1], -999.0)
+            return g1 >= -0.05 and g2 >= -0.05 and ms >= 0.0
+
+        return False
 
     def detect(self, snap: Stage0Snapshot) -> Stage0Candidate:
         dir0 = int(snap.dir0)
@@ -91,6 +134,7 @@ class Stage0Detector:
 
         pass_all_hard = all(checks.values())
         ms = self.compute_ms(snap)
+        gaps = self._compute_gaps(snap)
 
         # Shadow monitor only
         if self.ms_cut_monitor is not None:
@@ -126,24 +170,34 @@ class Stage0Detector:
                 },
             )
 
-        elif self._is_near_miss(failed, ms):
-            self.logger.debug(
-                "[Stage0Detector] near_miss "
-                f"ts={snap.timestamp.isoformat()} "
-                f"failed={failed} "
-                f"ms={ms:.6f} "
-                f"ms_cut_value={self.ms_cut_value:.6f} "
-                f"dir0={dir0} "
-                f"spread_ticks_1s={snap.spread_ticks_1s:.4f} "
-                f"spread_rel_5m={snap.spread_rel_5m:.4f} "
-                f"range60={snap.range_60s_bps:.4f} "
-                f"micro={snap.micro_bias_bps:.6f} "
-                f"obi10={snap.OBI_10:.6f} "
-                f"ti={snap.TI:.6f} "
-                f"nps={snap.nps:.2f} "
-                f"persist_micro_ms={snap.persist_micro_ms:.1f} "
-                f"persist_obi10_ms={snap.persist_obi10_ms:.1f} "
-                f"thin={snap.thinning_opp_3:.6f}"
+        elif self._is_near_miss(failed, ms, gaps):
+            log_candidate_event(
+                logger_cand,
+                {
+                    "venue": self.venue,
+                    "event": "near_miss",
+                    "ts": snap.timestamp.isoformat(),
+                    "symbol": self.symbol,
+                    "dir0": dir0,
+                    "failed": failed,
+                    "ms": ms,
+                    "ms_cut_value": self.ms_cut_value,
+                    "ms_above_cut": bool(np.isfinite(self.ms_cut_value) and ms >= self.ms_cut_value),
+                    "micro": snap.micro_bias_bps,
+                    "obi10": snap.OBI_10,
+                    "ti": snap.TI,
+                    "nps": snap.nps,
+                    "thin": snap.thinning_opp_3,
+                    "range60": snap.range_60s_bps,
+                    "persist_micro_ms": snap.persist_micro_ms,
+                    "persist_obi10_ms": snap.persist_obi10_ms,
+                    "gap_range60": gaps["range60"],
+                    "gap_obi10": gaps["obi10"],
+                    "gap_micro": gaps["micro"],
+                    "gap_ti": gaps["TI"],
+                    "gap_nps": gaps["nps"],
+                    "gap_thin": gaps["thin"],
+                },
             )
         else:
             self.logger.debug(
