@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from btc_bot.live.config import get_default_config
 from btc_bot.live.execution.paper_executor import PaperExecutor
 from btc_bot.live.logging.trade_logger import logger_pub, logger_cand, log_candidate_event
 from btc_bot.live.ml.inference import MLInferenceService
@@ -8,17 +7,25 @@ from btc_bot.live.models import EntryDecision, Stage0Snapshot, MLDecision, Regim
 from btc_bot.live.router.router import BranchRouter
 from btc_bot.live.stage0.detector import Stage0Detector
 from btc_bot.live.trade.lifecycle import TradeLifecycleManager
+from btc_bot.live.trade.pnl import compute_pnl_bps
 from btc_bot.live.trade.sizing import SimpleSizer
 
 
 class LiveEngine:
-    def __init__(self, cfg, detector: Stage0Detector, ml_service: MLInferenceService) -> None:    
+    def __init__(self, cfg, detector: Stage0Detector, ml_service: MLInferenceService) -> None:
         self.cfg = cfg
         self.detector = detector
         self.ml_service = ml_service
         self.router = BranchRouter(mr_bucket=self.cfg.regime.mr_bucket)
         self.sizer = SimpleSizer()
-        self.lifecycle = TradeLifecycleManager(self.cfg.exit)
+
+        self.roundtrip_fees_bps = float(self.cfg.stage0.fee_maker_bps) + float(self.cfg.stage0.fee_taker_bps)
+
+        self.lifecycle = TradeLifecycleManager(
+            self.cfg.exit,
+            roundtrip_fees_bps=self.roundtrip_fees_bps,
+        )
+
         self.executor = PaperExecutor()
         self.logger = logger_pub
         self.open_trades = {}
@@ -151,12 +158,22 @@ class LiveEngine:
             )
 
             if exit_decision.should_exit:
+                pnl_raw_bps = compute_pnl_bps(
+                    entry_price=trade.entry_price,
+                    current_price=current_mid,
+                    side=trade.side,
+                )
+
+                fees_bps = float(self.roundtrip_fees_bps)
+
                 self.executor.close_trade(
                     trade=trade,
                     exit_price=current_mid,
                     exit_time=now_ts,
                     pnl_bps=exit_decision.pnl_bps,
                     exit_reason=exit_decision.reason,
+                    pnl_raw_bps=pnl_raw_bps,
+                    fees_bps=fees_bps,
                 )
 
                 holding_s = (now_ts - trade.entry_time).total_seconds()
@@ -173,6 +190,8 @@ class LiveEngine:
                     f"exit_time={now_ts.isoformat()} "
                     f"entry_price={trade.entry_price:.6f} "
                     f"exit_price={float(current_mid):.6f} "
+                    f"pnl_raw_bps={float(pnl_raw_bps):.6f} "
+                    f"fees_bps={fees_bps:.6f} "
                     f"pnl_bps={float(exit_decision.pnl_bps):.6f} "
                     f"holding_s={holding_s:.3f} "
                     f"reason={exit_decision.reason}"
@@ -193,6 +212,8 @@ class LiveEngine:
                         "exit_time": now_ts.isoformat(),
                         "entry_price": float(trade.entry_price),
                         "exit_price": float(current_mid),
+                        "pnl_raw_bps": float(pnl_raw_bps),
+                        "fees_bps": float(fees_bps),
                         "pnl_bps": float(exit_decision.pnl_bps),
                         "holding_s": float(holding_s),
                         "reason": str(exit_decision.reason),
@@ -202,4 +223,4 @@ class LiveEngine:
                 closed.append(trade_id)
 
         for trade_id in closed:
-            self.open_trades.pop(trade_id, None)
+            self.open_trades.pop(trade_id, None) 

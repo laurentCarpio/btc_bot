@@ -17,6 +17,8 @@ class Stage0Config:
     freq_ms: int = 250
     depths: tuple[int, ...] = (1, 3, 5, 10, 14)
     persist_ms_min: int = 250
+    fee_maker_bps: float = 2.0
+    fee_taker_bps: float = 6.0
 
 
 @dataclass(slots=True)
@@ -52,11 +54,11 @@ class RegimeConfig:
     n_vol_buckets: int = 5
     mr_bucket: str = "b2"
 
-
 @dataclass(slots=True)
 class ExitConfig:
     check_negative_at_s: int = 60
     hard_exit_at_s: int = 180
+    negative_buffer_bps: float = 1.0
 
 
 @dataclass(slots=True)
