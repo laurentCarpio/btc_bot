@@ -89,13 +89,8 @@ class BinanceWsPublicClient:
         payload = data["data"]
 
         if "@depth" in stream:
-            book = {
-                "bids": payload.get("b", []),
-                "asks": payload.get("a", []),
-                "timestamp": payload.get("E"),
-            }
-
-            if self.on_book:
+            book = self._normalize_depth20_snapshot(payload)
+            if book is not None and self.on_book:
                 await self._safe_call(self.on_book, book)
 
         elif "@aggTrade" in stream:
@@ -103,7 +98,7 @@ class BinanceWsPublicClient:
                 "price": float(payload["p"]),
                 "qty": float(payload["q"]),
                 "side": "buy" if not payload["m"] else "sell",
-                "timestamp": payload["T"],
+                "timestamp": int(payload["T"]),
             }
 
             if self.on_trade:
@@ -128,6 +123,44 @@ class BinanceWsPublicClient:
 
             if self.on_candle:
                 await self._safe_call(self.on_candle, candle)
+
+    def _normalize_depth20_snapshot(self, payload: dict) -> dict | None:
+        raw_bids = payload.get("b", [])
+        raw_asks = payload.get("a", [])
+        ts_ms = payload.get("E")
+
+        if not raw_bids or not raw_asks or ts_ms is None:
+            return None
+
+        try:
+            bids = [(float(px), float(sz)) for px, sz in raw_bids if float(sz) > 0.0]
+            asks = [(float(px), float(sz)) for px, sz in raw_asks if float(sz) > 0.0]
+        except Exception:
+            return None
+
+        if not bids or not asks:
+            return None
+
+        # Sort defensively to ensure a proper snapshot ordering
+        bids.sort(key=lambda x: x[0], reverse=True)
+        asks.sort(key=lambda x: x[0])
+
+        best_bid = bids[0][0]
+        best_ask = asks[0][0]
+
+        # Reject corrupted / crossed books
+        if best_bid <= 0 or best_ask <= 0 or best_bid >= best_ask:
+            self.logger.debug(
+                f"[BinanceWS] dropped crossed/invalid depth snapshot "
+                f"best_bid={best_bid} best_ask={best_ask}"
+            )
+            return None
+
+        return {
+            "bids": bids,
+            "asks": asks,
+            "timestamp": int(ts_ms),
+        }
 
     async def _safe_call(self, cb, data):
         try:

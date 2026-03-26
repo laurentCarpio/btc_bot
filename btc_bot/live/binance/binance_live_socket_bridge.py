@@ -19,6 +19,14 @@ class BinanceLiveSocketBridge:
         self.ws_pub_client.on_trade = self._on_trade
         self.ws_pub_client.on_candle = self._on_candle
 
+        self._spread_stats = {
+            "n": 0,
+            "sum": 0.0,
+            "min": float("inf"),
+            "max": float("-inf"),
+            "crossed": 0,
+        }
+
     async def connect(self):
         await self.warmup_recent_1m_klines(limit=300)
         await self.ws_pub_client.connect()
@@ -53,6 +61,30 @@ class BinanceLiveSocketBridge:
             f"[BinanceLiveSocketBridge] warmup done symbol={self.ws_pub_client.symbol.upper()}"
         )
 
+    def flush_spread_stats(self):
+        s = self._spread_stats
+        if s["n"] <= 0 and s["crossed"] <= 0:
+            return
+
+        avg = (s["sum"] / s["n"]) if s["n"] > 0 else float("nan")
+
+        self.logger.info(
+            f"[BINANCE_SPREAD] "
+            f"n={s['n']} "
+            f"avg={avg:.6f} "
+            f"min={s['min']:.6f} "
+            f"max={s['max']:.6f} "
+            f"crossed={s['crossed']}"
+        )
+
+        self._spread_stats = {
+            "n": 0,
+            "sum": 0.0,
+            "min": float("inf"),
+            "max": float("-inf"),
+            "crossed": 0,
+        }
+    
     async def _on_book(self, book: dict):
         try:
             bids = book.get("bids", [])
@@ -68,6 +100,28 @@ class BinanceLiveSocketBridge:
 
             norm_bids = [(float(px), float(sz)) for px, sz in bids[:16]]
             norm_asks = [(float(px), float(sz)) for px, sz in asks[:16]]
+
+            if not norm_bids or not norm_asks:
+                return
+
+            best_bid = norm_bids[0][0]
+            best_ask = norm_asks[0][0]
+
+            if best_bid >= best_ask:
+                self._spread_stats["crossed"] += 1
+                self.logger.debug(
+                    f"[BinanceLiveSocketBridge] dropped crossed/invalid book "
+                    f"best_bid={best_bid} best_ask={best_ask}"
+                )
+                return
+
+            spread = best_ask - best_bid
+
+            s = self._spread_stats
+            s["n"] += 1
+            s["sum"] += spread
+            s["min"] = min(s["min"], spread)
+            s["max"] = max(s["max"], spread)
 
             await self.live_orchestrator.on_book_update(
                 symbol=self.ws_pub_client.symbol.upper(),

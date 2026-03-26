@@ -15,7 +15,7 @@ from btc_bot.live.stage0.ms_cut_monitor import MSCutMonitor
 from btc_bot.live.logging.trade_logger import logger_pub
 
 
-ML_RUN_ROOT = "s3://tradebot-config-tokyo/research/ms_edge/ml/runs/run_id=stageb_ml_high_f3abb4ce18"
+ML_RUN_ROOT = "s3://tradebot-config-tokyo/research/ms_edge/ml/runs/run_id=stageb_ml_low_c1e8bb16ef"
 
 
 async def run_paper_live(
@@ -93,6 +93,10 @@ async def run_paper_live(
     try:
         while True:
             await asyncio.sleep(60)
+
+            # 🔥 AJOUT ICI
+            if hasattr(bridge, "flush_spread_stats"):
+                bridge.flush_spread_stats()
 
             live_q95 = "NA"
             live_q97 = "NA"

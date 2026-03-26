@@ -37,10 +37,10 @@ class LiveEngine:
         if self.cfg.risk.one_position_per_symbol and self._has_open_trade_for_symbol(symbol):
             return "existing_open_position"
         return None
-    
+
     def on_stage0_snapshot(self, snap: Stage0Snapshot, atr_bps: float, vol_bucket: str):
         candidate = self.detector.detect(snap)
-        self.logger.debug(f"[LiveEngine] candidate : {candidate}")
+        self.logger.debug(f"[LiveEngine] candidate: {candidate}")
 
         if not candidate.pass_all_hard:
             return None
@@ -57,7 +57,7 @@ class LiveEngine:
                 score=None,
                 size_mult=0.0,
             )
-            self.logger.info(f"[LiveEngine] entry_decision : {entry_decision}")
+            self.logger.info(f"[LiveEngine] entry_decision: {entry_decision}")
             return None
 
         regime = RegimeSnapshot(
@@ -78,24 +78,48 @@ class LiveEngine:
         feature_map = dict(candidate.features)
         feature_map["atr_bps"] = float(atr_bps)
 
-        if router_decision.router_branch != "BO":
+        # --------------------------------------------------
+        # FINAL LOGIC
+        # MR                -> no ML, always trade, size=1.0
+        # BO + low          -> ML active, dynamic sizing
+        # BO + not low      -> no ML, always trade, size=1.0
+        # --------------------------------------------------
+
+        if router_decision.router_branch == "MR":
             ml_decision = MLDecision(
                 enabled=False,
                 score=None,
                 accepted=True,
                 threshold=None,
             )
-        else:
+            size_mult = 1.0
+            reason = "mr_accept"
+
+        elif router_decision.router_branch == "BO" and regime.vol_regime3 == "low":
             ml_decision = self.ml_service.score(feature_map)
+            
+            size_mult = self.sizer.size_from_ml(
+                ml_decision,
+                vol_regime3=regime.vol_regime3
+            )
+
+            if size_mult > 0:
+                reason = "ml_low_accept"
+            else:
+                reason = "ml_low_reject"
+
+        else:
+            # BO in high / other non-low regimes: no ML filter
+            ml_decision = MLDecision(
+                enabled=False,
+                score=None,
+                accepted=True,
+                threshold=None,
+            )
+            size_mult = 1.0
+            reason = "bo_no_ml_accept"
 
         self.logger.info(f"[LiveEngine] ml_decision: {ml_decision}")
-
-        size_mult = self.sizer.size_from_ml(ml_decision)
-
-        if router_decision.router_branch != "BO":
-            reason = "mr_accept" if size_mult > 0 else "mr_reject"
-        else:
-            reason = "ml_accept" if size_mult > 0 else "ml_reject"
 
         entry_decision = EntryDecision(
             should_enter=size_mult > 0,
@@ -109,7 +133,7 @@ class LiveEngine:
         )
 
         if not entry_decision.should_enter:
-            self.logger.info(f" [LiveEngine] entry_decision: {entry_decision}")
+            self.logger.info(f"[LiveEngine] entry_decision: {entry_decision}")
             return None
 
         self.logger.info(f"[LiveEngine] entry_decision: {entry_decision}")
@@ -126,7 +150,8 @@ class LiveEngine:
             f"score_ml={trade.score_ml} "
             f"size_mult={trade.size_mult} "
             f"entry_time={trade.entry_time.isoformat()} "
-            f"entry_price={trade.entry_price:.6f}"
+            f"entry_price={trade.entry_price:.6f} "
+            f"vol_regime3={regime.vol_regime3}"
         )
 
         log_candidate_event(
@@ -142,6 +167,7 @@ class LiveEngine:
                 "size_mult": float(trade.size_mult),
                 "entry_time": trade.entry_time.isoformat(),
                 "entry_price": float(trade.entry_price),
+                "vol_regime3": regime.vol_regime3,
             },
         )
 
@@ -223,4 +249,4 @@ class LiveEngine:
                 closed.append(trade_id)
 
         for trade_id in closed:
-            self.open_trades.pop(trade_id, None) 
+            self.open_trades.pop(trade_id, None)

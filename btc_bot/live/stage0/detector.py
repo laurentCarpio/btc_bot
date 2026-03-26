@@ -89,6 +89,7 @@ class Stage0Detector:
             "sign_micro": 1.0 if np.sign(snap.micro_bias_bps) == int(snap.dir0) else -1.0,
             "sign_ti": 1.0 if np.sign(snap.TI) == int(snap.dir0) else -1.0,
         }
+    
     def _is_near_miss(self, failed: list[str], ms: float, gaps: dict[str, float]) -> bool:
         # Trop de filtres ratés = pas intéressant
         if len(failed) == 0:
