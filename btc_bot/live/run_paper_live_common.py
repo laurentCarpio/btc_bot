@@ -98,6 +98,9 @@ async def run_paper_live(
             if hasattr(bridge, "flush_spread_stats"):
                 bridge.flush_spread_stats()
 
+            if hasattr(bridge, "flush_trade_stats"):
+                bridge.flush_trade_stats()
+
             live_q95 = "NA"
             live_q97 = "NA"
             eff_q95 = cfg.thresholds.ms_cut_value

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import inspect
 import logging
 from btc_bot.live.binance.rest_market_data import fetch_recent_klines_1m
+from btc_bot.live.logging.trade_stats_tracker import TradeStatsTracker
 
 class BinanceLiveSocketBridge:
     def __init__(
@@ -19,6 +19,7 @@ class BinanceLiveSocketBridge:
         self.ws_pub_client.on_trade = self._on_trade
         self.ws_pub_client.on_candle = self._on_candle
 
+        self.trade_stats = TradeStatsTracker(window_s=2.0)
         self._spread_stats = {
             "n": 0,
             "sum": 0.0,
@@ -85,6 +86,15 @@ class BinanceLiveSocketBridge:
             "crossed": 0,
         }
     
+    def flush_trade_stats(self):
+        s = self.trade_stats.snapshot()
+        self.logger.info(
+            f"[BINANCE_TRADE_STATS] "
+            f"ntr={s['ntr']} "
+            f"nps={s['nps']:.2f} "
+            f"ti_abs={s['ti_abs']:.6f}"
+        )
+        
     async def _on_book(self, book: dict):
         try:
             bids = book.get("bids", [])
@@ -98,8 +108,11 @@ class BinanceLiveSocketBridge:
                 self._seen_first_book = True
                 self.logger.info("[BinanceLiveSocketBridge] first book received")
 
-            norm_bids = [(float(px), float(sz)) for px, sz in bids[:16]]
-            norm_asks = [(float(px), float(sz)) for px, sz in asks[:16]]
+            norm_bids = [(float(px), float(sz)) for px, sz in bids[:16] if float(sz) > 0.0]
+            norm_asks = [(float(px), float(sz)) for px, sz in asks[:16] if float(sz) > 0.0]
+
+            norm_bids.sort(key=lambda x: x[0], reverse=True)
+            norm_asks.sort(key=lambda x: x[0])
 
             if not norm_bids or not norm_asks:
                 return
@@ -145,6 +158,12 @@ class BinanceLiveSocketBridge:
                 self._seen_first_trade = True
                 self.logger.info("[BinanceLiveSocketBridge] first trade received")
 
+            self.trade_stats.add_trade(
+                ts_ms=ts_ms,
+                qty=qty,
+                side=side,
+            )
+            
             await self.live_orchestrator.on_trade_update(
                 symbol=self.ws_pub_client.symbol.upper(),
                 ts_ms=ts_ms,

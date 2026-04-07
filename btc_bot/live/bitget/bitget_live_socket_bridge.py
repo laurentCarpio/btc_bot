@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from btc_bot.live.bitget.ws_msg_dispatcher import WsMessageDispatcher
-
+from btc_bot.live.logging.trade_stats_tracker import TradeStatsTracker
 
 class BitgetLiveSocketBridge:
     """
@@ -22,6 +22,7 @@ class BitgetLiveSocketBridge:
 
         self.ws_pub_client = ws_pub_client.use_dispatcher(self.dispatcher)
 
+        self.trade_stats = TradeStatsTracker(window_s=2.0)
         self._spread_stats = {
             "n": 0,
             "sum": 0.0,
@@ -99,6 +100,15 @@ class BitgetLiveSocketBridge:
 
         return bids, asks
 
+    def flush_trade_stats(self):
+        s = self.trade_stats.snapshot()
+        self.logger.info(
+            f"[BITGET_TRADE_STATS] "
+            f"ntr={s['ntr']} "
+            f"nps={s['nps']:.2f} "
+            f"ti_abs={s['ti_abs']:.6f}"
+        )
+        
     async def on_book_message(self, message: dict):
         try:
             if "event" in message:
@@ -182,6 +192,12 @@ class BitgetLiveSocketBridge:
 
                 if price <= 0 or size <= 0 or side not in ("buy", "sell"):
                     continue
+
+                self.trade_stats.add_trade(
+                    ts_ms=ts,
+                    qty=size,
+                    side=side,
+                )
 
                 await self.live_orchestrator.on_trade_update(
                     symbol=symbol,
